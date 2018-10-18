@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -197,7 +198,7 @@ namespace ome
       }
 
       void
-      MinimalTIFFWriter::setSeries(dimension_size_type series) const
+      MinimalTIFFWriter::setSeries(dimension_size_type series)
       {
         const dimension_size_type currentSeries = getSeries();
         detail::FormatWriter::setSeries(series);
@@ -210,7 +211,7 @@ namespace ome
       }
 
       void
-      MinimalTIFFWriter::setPlane(dimension_size_type plane) const
+      MinimalTIFFWriter::setPlane(dimension_size_type plane)
       {
         const dimension_size_type currentPlane = getPlane();
         detail::FormatWriter::setPlane(plane);
@@ -339,7 +340,7 @@ namespace ome
 
         // This isn't necessarily always true; we might want to use a
         // photometric interpretation other than RGB with three
-        // subchannels.
+        // samples.
         if (isRGB(channel) && getRGBChannelCount(channel) == 3)
           ifd->setPhotometricInterpretation(tiff::RGB);
         else

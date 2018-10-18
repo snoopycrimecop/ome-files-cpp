@@ -8,6 +8,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -276,7 +277,6 @@ private:
     c->falseColor = true;
     c->metadataComplete = false;
     c->thumbnail = false;
-    c->resolutionCount = 1;
 
     return c;
   }
@@ -296,6 +296,29 @@ public:
             makeMetadata(m, 1, makeCore());
             makeMetadata(m, 2, makeCore());
             makeMetadata(m, 3, makeCore());
+          }
+        else if (id == "singlesubresolution.test")
+          {
+            // 4 series
+            makeMetadata(m, 0, makeCore());
+            makeMetadata(m, 1, makeCore());
+            makeMetadata(m, 2, makeCore());
+            makeMetadata(m, 3, makeCore());
+
+            ome::files::addResolutions(*m, 1, {{256U,512U,20U}, {128U,256U,20U}, {64U,128U,20U}});
+          }
+        else if (id == "allsubresolution.test")
+          {
+            // 4 series
+            makeMetadata(m, 0, makeCore());
+            makeMetadata(m, 1, makeCore());
+            makeMetadata(m, 2, makeCore());
+            makeMetadata(m, 3, makeCore());
+
+            ome::files::addResolutions(*m, 0, {{256U,512U,20U}, {128U,256U,20U}, {64U,128U,20U}});
+            ome::files::addResolutions(*m, 1, {{256U,512U,20U}, {128U,256U,20U}, {64U,128U,20U}});
+            ome::files::addResolutions(*m, 2, {{256U,512U,20U}, {128U,256U,20U}, {64U,128U,20U}});
+            ome::files::addResolutions(*m, 3, {{256U,512U,20U}, {128U,256U,20U}, {64U,128U,20U}});
           }
 
         std::shared_ptr<::ome::xml::meta::MetadataRetrieve> mr(std::static_pointer_cast<::ome::xml::meta::MetadataRetrieve>(m));
@@ -353,7 +376,7 @@ TEST_P(FormatWriterTest, IsThisType)
 
 TEST_P(FormatWriterTest, DefaultLUT)
 {
-  VariantPixelBuffer buf(boost::extents[256][1][1][1][1][3][1][1][1]);
+  VariantPixelBuffer buf(boost::extents[256][1][1][3]);
   EXPECT_THROW(w.setLookupTable(0U, buf), std::logic_error);
 }
 
@@ -361,7 +384,7 @@ TEST_P(FormatWriterTest, OutputLUT)
 {
   w.setId("output.test");
 
-  VariantPixelBuffer buf(boost::extents[256][1][1][1][1][3][1][1][1]);
+  VariantPixelBuffer buf(boost::extents[256][1][1][3]);
   EXPECT_THROW(w.setLookupTable(0U, buf), std::runtime_error);
 }
 
@@ -369,7 +392,7 @@ TEST_P(FormatWriterTest, DefaultPixels)
 {
   const FormatWriterTestParameters& params(GetParam());
 
-  VariantPixelBuffer buf(boost::extents[512][512][1][1][2][1][1][1][1],
+  VariantPixelBuffer buf(boost::extents[512][512][1][1],
                          params.type);
 
   EXPECT_THROW(w.saveBytes(0, buf), std::logic_error);
@@ -417,7 +440,7 @@ namespace
             ss.write(reinterpret_cast<char *>(&val), sizeof(val));
           }
 
-      VariantPixelBuffer buf(boost::extents[512][512][1][1][2][1][1][1][1],
+      VariantPixelBuffer buf(boost::extents[512][512][1][1],
                              params.type);
 
       // ss.seekg(0, std::ios::beg);
@@ -442,7 +465,7 @@ TEST_P(FormatWriterTest, OutputPixels)
 
   w.setId("output.test");
 
-  VariantPixelBuffer buf(boost::extents[512][512][1][1][2][1][1][1][1],
+  VariantPixelBuffer buf(boost::extents[512][512][1][1],
                          params.type);
 
   OutputPixelsTest v(params, w, buf);
@@ -456,6 +479,13 @@ TEST_P(FormatWriterTest, DefaultSeries)
   EXPECT_THROW(w.setSeries(4U), std::logic_error);
 }
 
+TEST_P(FormatWriterTest, DefaultResolution)
+{
+  EXPECT_THROW(w.setResolution(0U), std::logic_error);
+  EXPECT_THROW(w.setResolution(1U), std::logic_error);
+  EXPECT_THROW(w.setResolution(2U), std::logic_error);
+}
+
 TEST_P(FormatWriterTest, OutputSeries)
 {
   w.setId("output.test");
@@ -466,6 +496,74 @@ TEST_P(FormatWriterTest, OutputSeries)
   EXPECT_THROW(w.setSeries(2U), std::logic_error);
   // Series is invalid
   EXPECT_THROW(w.setSeries(4U), std::logic_error);
+}
+
+TEST_P(FormatWriterTest, OutputSingleResolution)
+{
+  w.setId("singlesubresolution.test");
+
+  // Series 0 has 1 resolution.
+  EXPECT_NO_THROW(w.setSeries(0U));
+  EXPECT_EQ(1U, w.getResolutionCount());
+  EXPECT_NO_THROW(w.setResolution(0U));
+  EXPECT_EQ(512U, w.getSizeX());
+  EXPECT_EQ(1024U, w.getSizeY());
+  EXPECT_EQ(20U, w.getSizeZ());
+  EXPECT_THROW(w.setResolution(1U), std::logic_error);
+  EXPECT_THROW(w.setResolution(2U), std::logic_error);
+
+  // Series 1 has 4 resolutions.
+  EXPECT_NO_THROW(w.setSeries(1U));
+  EXPECT_EQ(4U, w.getResolutionCount());
+  EXPECT_NO_THROW(w.setResolution(0U));
+  EXPECT_EQ(512U, w.getSizeX());
+  EXPECT_EQ(1024U, w.getSizeY());
+  EXPECT_EQ(20U, w.getSizeZ());
+  EXPECT_NO_THROW(w.setResolution(1U));
+  EXPECT_EQ(256U, w.getSizeX());
+  EXPECT_EQ(512U, w.getSizeY());
+  EXPECT_EQ(20U, w.getSizeZ());
+  EXPECT_NO_THROW(w.setResolution(2U));
+  EXPECT_EQ(128U, w.getSizeX());
+  EXPECT_EQ(256U, w.getSizeY());
+  EXPECT_EQ(20U, w.getSizeZ());
+  EXPECT_NO_THROW(w.setResolution(3U));
+  EXPECT_EQ(64U, w.getSizeX());
+  EXPECT_EQ(128U, w.getSizeY());
+  EXPECT_EQ(20U, w.getSizeZ());
+  EXPECT_THROW(w.setResolution(4U), std::logic_error);
+}
+
+TEST_P(FormatWriterTest, OutputAllResolutions)
+{
+  w.setId("allsubresolution.test");
+
+  for (dimension_size_type s = 0U;
+       s < w.getSeriesCount();
+       ++s)
+    {
+      // All series have 4 resolutions.
+      EXPECT_NO_THROW(w.setSeries(s));
+      EXPECT_EQ(4U, w.getResolutionCount());
+      EXPECT_NO_THROW(w.setResolution(0U));
+      EXPECT_NO_THROW(w.setResolution(0U));
+      EXPECT_EQ(512U, w.getSizeX());
+      EXPECT_EQ(1024U, w.getSizeY());
+      EXPECT_EQ(20U, w.getSizeZ());
+      EXPECT_NO_THROW(w.setResolution(1U));
+      EXPECT_EQ(256U, w.getSizeX());
+      EXPECT_EQ(512U, w.getSizeY());
+      EXPECT_EQ(20U, w.getSizeZ());
+      EXPECT_NO_THROW(w.setResolution(2U));
+      EXPECT_EQ(128U, w.getSizeX());
+      EXPECT_EQ(256U, w.getSizeY());
+      EXPECT_EQ(20U, w.getSizeZ());
+      EXPECT_NO_THROW(w.setResolution(3U));
+      EXPECT_EQ(64U, w.getSizeX());
+      EXPECT_EQ(128U, w.getSizeY());
+      EXPECT_EQ(20U, w.getSizeZ());
+      EXPECT_THROW(w.setResolution(4U), std::logic_error);
+    }
 }
 
 TEST_P(FormatWriterTest, DefaultFrameRate)

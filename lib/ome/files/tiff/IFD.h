@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -72,7 +73,7 @@ namespace ome
       private:
         class Impl;
         /// Private implementation details.
-        std::shared_ptr<Impl> impl;
+        std::unique_ptr<Impl> impl;
 
       protected:
         /**
@@ -91,16 +92,25 @@ namespace ome
          */
         IFD(std::shared_ptr<TIFF>& tiff);
 
-        /// @cond SKIP
-        IFD (const IFD&) = delete;
-
-        IFD&
-        operator= (const IFD&) = delete;
-        /// @endcond SKIP
-
       public:
+        /**
+         * Copy constructor.
+         *
+         * @param copy the object to copy.
+         */
+        IFD(const IFD& copy);
+
         /// Destructor.
         virtual ~IFD();
+
+        /**
+         * Copy assignment operator.
+         *
+         * @param rhs the object to assign.
+         * @returns the modified object.
+         */
+        IFD&
+        operator= (const IFD& rhs);
 
         /**
          * Open an IFD by index.
@@ -245,30 +255,6 @@ namespace ome
          */
         void
         setTileType(TileType type);
-
-        /**
-         * Get the current tile being written.
-         *
-         * This is the tile currently being modified pending flush.
-         *
-         * @returns the current tile.
-         */
-        dimension_size_type
-        getCurrentTile() const;
-
-        /**
-         * Set the current tile being written.
-         *
-         * This is the tile currently being modified pending flush.
-         *
-         * @note This should not be set by hand; it will be updated by
-         * the code writing out tile data called internally by
-         * writeImage().
-         *
-         * @param tile the current tile.
-         */
-        void
-        setCurrentTile(dimension_size_type tile);
 
         /**
          * Get tiling metadata.
@@ -474,6 +460,41 @@ namespace ome
         setCompression(Compression compression);
 
         /**
+         * Get number of SubIFDs.
+         *
+         * @returns the SubIFD count.
+         */
+        uint16_t
+        getSubIFDCount() const;
+
+        /**
+         * Get SubIFD offsets.
+         *
+         * @returns the SubIFD count.
+         */
+        std::vector<uint64_t>
+        getSubIFDOffsets() const;
+
+        /**
+         * Set number of SubIFDs.
+         *
+         * The offset for each IFD is set to zero.  It will be filled
+         * in later.
+         *
+         * @param size the number of SubIFDs to set.
+         */
+        void
+        setSubIFDCount(uint16_t size);
+
+        /**
+         * Set SubIFD offsets.
+         *
+         * @param subifds the offsets to set.
+         */
+        void
+        setSubIFDOffsets(const std::vector<uint64_t>& subifds);
+
+        /**
          * Read a whole image plane into a pixel buffer.
          *
          * @param buf the destination pixel buffer.
@@ -483,11 +504,11 @@ namespace ome
 
         /**
          * @copydoc IFD::readImage(VariantPixelBuffer&) const
-         * @param subC the subchannel to read.
+         * @param sample the sample index to read.
          */
         void
         readImage(VariantPixelBuffer& buf,
-                  dimension_size_type subC) const;
+                  dimension_size_type sample) const;
 
         /**
          * Read a region of an image plane into a pixel buffer.
@@ -512,7 +533,7 @@ namespace ome
 
         /**
          * @copydoc IFD::readImage(VariantPixelBuffer&,dimension_size_type,dimension_size_type,dimension_size_type,dimension_size_type) const
-         * @param subC the subchannel to read.
+         * @param sample the sample index to read.
          */
         void
         readImage(VariantPixelBuffer& dest,
@@ -520,7 +541,7 @@ namespace ome
                   dimension_size_type y,
                   dimension_size_type w,
                   dimension_size_type h,
-                  dimension_size_type subC) const;
+                  dimension_size_type sample) const;
 
         /**
          * Read a lookup table into a pixel buffer.
@@ -540,11 +561,11 @@ namespace ome
 
         /**
          * @copydoc IFD::writeImage(const VariantPixelBuffer&)
-         * @param subC the subchannel to write.
+         * @param sample the sample index to write.
          */
         void
         writeImage(const VariantPixelBuffer& buf,
-                   dimension_size_type       subC);
+                   dimension_size_type       sample);
 
         /**
          * Write a whole image plane from a pixel buffer.
@@ -568,7 +589,7 @@ namespace ome
 
         /**
          * @copydoc IFD::writeImage(const VariantPixelBuffer&,dimension_size_type,dimension_size_type,dimension_size_type,dimension_size_type)
-         * @param subC the subchannel to write.
+         * @param sample the sample index to write.
          */
         void
         writeImage(const VariantPixelBuffer& source,
@@ -576,7 +597,7 @@ namespace ome
                    dimension_size_type       y,
                    dimension_size_type       w,
                    dimension_size_type       h,
-                   dimension_size_type       subC);
+                   dimension_size_type       sample);
 
         /**
          * Get next directory.

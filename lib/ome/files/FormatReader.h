@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -49,6 +50,7 @@
 #include <ome/compat/memory.h>
 
 #include <ome/files/CoreMetadata.h>
+#include <ome/files/CoreMetadataList.h>
 #include <ome/files/FileInfo.h>
 #include <ome/files/FormatHandler.h>
 #include <ome/files/MetadataConfigurable.h>
@@ -88,8 +90,8 @@ namespace ome
        * Sentry for saving and restoring reader series state.
        *
        * For any FormatReader method or subclass method which needs to
-       * set and later restore the series/coreIndex/resolution as part
-       * of its operation, this class exists to manage the safe
+       * set and later restore the series/resolution/plane indexes as
+       * part of its operation, this class exists to manage the safe
        * restoration of the state.  Create an instance of this class
        * with the reader set to @c *this.  When the instance goes out
        * of scope, e.g. at the end of a block or method, or when an
@@ -101,8 +103,10 @@ namespace ome
       private:
         /// Reader for which the state will be saved and restored.
         const FormatReader& reader;
-        /// Saved core index.
-        dimension_size_type coreIndex;
+        /// Saved series index.
+        dimension_size_type series;
+        /// Saved resolution index.
+        dimension_size_type resolution;
         /// Saved plane index.
         dimension_size_type plane;
 
@@ -114,7 +118,8 @@ namespace ome
          */
         SaveSeries(const FormatReader& reader):
           reader(reader),
-          coreIndex(reader.getCoreIndex()),
+          series(reader.getSeries()),
+          resolution(reader.getResolution()),
           plane(reader.getPlane())
         {}
 
@@ -127,8 +132,10 @@ namespace ome
         {
           try
             {
-              if (coreIndex != reader.getCoreIndex())
-                reader.setCoreIndex(coreIndex);
+              if (series != reader.getSeries())
+                reader.setSeries(series);
+              if (resolution != reader.getResolution())
+                reader.setResolution(resolution);
               if (plane != reader.getPlane())
                 reader.setPlane(plane);
             }
@@ -949,7 +956,7 @@ namespace ome
        * @returns a const reference to the core metadata.
        */
       virtual
-      const std::vector<std::shared_ptr<CoreMetadata>>&
+      const CoreMetadataList&
       getCoreMetadataList() const = 0;
 
       /**
@@ -1157,52 +1164,6 @@ namespace ome
       // Sub-resolution API methods
 
       /**
-       * Get the first core index corresponding to the specified series.
-       *
-       * @param series the series to use.
-       * @returns the first for index for the series.
-       */
-      virtual
-      dimension_size_type
-      seriesToCoreIndex(dimension_size_type series) const = 0;
-
-      /**
-       * Get the series corresponding to the specified core index.
-       *
-       * @param index the core index to use.
-       * @returns the series for the index.
-       */
-      virtual
-      dimension_size_type
-      coreIndexToSeries(dimension_size_type index) const = 0;
-
-      /**
-       * Get the CoreMetadata index of the current resolution/series.
-       *
-       * @returns the index.
-       */
-      virtual
-      dimension_size_type
-      getCoreIndex() const = 0;
-
-      /**
-       * Set the current resolution/series (ignoring sub-resolutions).
-       *
-       * Equivalent to setSeries(), but with flattened resolutions always
-       * set to @c false.
-       *
-       * @param index the core index to set.
-       *
-       * @todo Remove use of stateful API which requires use of
-       * series switching in const methods.
-       *
-       * @throws std::logic_error if the index is invalid.
-       */
-      virtual
-      void
-      setCoreIndex(dimension_size_type index) const = 0;
-
-      /**
        * Get the number of resolutions for the current series.
        *
        * Resolutions are stored in descending order of size, so the
@@ -1243,30 +1204,6 @@ namespace ome
       virtual
       dimension_size_type
       getResolution() const = 0;
-
-      /**
-       * Get resolution flattening.
-       *
-       * @returns @c true if flattening is enabled, @c false otherwise.
-       */
-      virtual
-      bool
-      hasFlattenedResolutions() const = 0;
-
-      /**
-       * Set resolution flattening.
-       *
-       * This controls whether or not resolution levels are flattened
-       * into individual series.  This alters the behaviour of
-       * setSeries() and getSeries() but does not affect the behaviour
-       * of setCoreIndex() and getCoreIndex(), which are
-       * resolution-independent.
-       *
-       * @param flatten @c true to enable flattening, @c false to disable.
-       */
-      virtual
-      void
-      setFlattenedResolutions(bool flatten) = 0;
     };
 
   }

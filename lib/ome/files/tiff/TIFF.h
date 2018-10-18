@@ -159,7 +159,7 @@ namespace ome
         class Impl;
         class wrapped_type;
         /// Private implementation details.
-        std::shared_ptr<Impl> impl;
+        std::unique_ptr<Impl> impl;
 
       protected:
         /**
@@ -267,6 +267,19 @@ namespace ome
          */
         void
         writeCurrentDirectory();
+
+        /**
+         * Write an IFD.
+         *
+         * The pixel data accompanying this IFD must have been written
+         * using IFD::writeImage() prior to calling this method, or
+         * else the TIFF tags for strip and tile offsets will be
+         * incomplete and the file will fail to read.
+         *
+         * @param ifd the IFD to write.
+         */
+        void
+        writeDirectory(std::shared_ptr<IFD> ifd);
 
         /**
          * Get the underlying libtiff @c \::TIFF instance.

@@ -7,6 +7,7 @@
 #   - University of Dundee
 #   - Board of Regents of the University of Wisconsin-Madison
 #   - Glencoe Software, Inc.
+# Copyright © 2018 Quantitative Imaging Systems, LLC
 # %%
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -68,6 +69,17 @@ if(BUILD_TESTS)
   target_link_libraries(metadatamap ome-test)
 
   ome_files_add_test(ome-files/metadatamap metadatamap)
+
+  add_executable(metadatalist metadatalist.cpp)
+  target_link_libraries(metadatalist ome-test)
+
+  ome_files_add_test(ome-files/metadatalist metadatalist)
+
+  add_executable(coremetadatalist coremetadatalist.cpp)
+  target_link_libraries(coremetadatalist OME::Files)
+  target_link_libraries(coremetadatalist ome-test)
+
+  ome_files_add_test(ome-files/coremetadatalist coremetadatalist)
 
   add_executable(metadatatools metadatatools.cpp)
   target_link_libraries(metadatatools OME::Files)
@@ -131,7 +143,7 @@ if(BUILD_TESTS)
 
   ome_files_add_test(ome-files/minimaltiffwriter minimaltiffwriter)
 
-  add_executable(ometiffwriter ometiffwriter.cpp tiffsamples.cpp)
+  add_executable(ometiffwriter ometiffwriter.cpp ometiffwriter-subresolutions.cpp tiffsamples.cpp)
   target_link_libraries(ometiffwriter OME::Files)
   target_link_libraries(ometiffwriter ome-test)
 

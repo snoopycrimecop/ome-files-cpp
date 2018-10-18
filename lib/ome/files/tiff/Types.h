@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -89,6 +90,15 @@ namespace ome
           TYPE_IFD8 = 18        ///< BigTIFF 64-bit unsigned integer (offset).
         };
 
+      /// Sub-file type is a normal image.
+      constexpr uint32_t SUBFILETYPE_NONE = 0x0;
+      /// Sub-file type is a reduced-size image.
+      constexpr uint32_t SUBFILETYPE_REDUCEDIMAGE = 0x1;
+      /// Sub-file type is a multi-page image.
+      constexpr uint32_t SUBFILETYPE_PAGE = 0x2;
+      /// Sub-file type is a mask image.
+      constexpr uint32_t SUBFILETYPE_MASK = 0x4;
+
       /// Compression technique.
       enum Compression
         {
@@ -159,7 +169,7 @@ namespace ome
         {
           MIN_IS_WHITE = 0,  ///< Minimum value is white.
           MIN_IS_BLACK = 1,  ///< Minimum value is black.
-          RGB = 2,           ///< RGB subchannels.
+          RGB = 2,           ///< RGB samples.
           PALETTE = 3,       ///< Indexed colour with colormap.
           MASK = 4,          ///< Mask.
           SEPARATED = 5,     ///< Color separations.

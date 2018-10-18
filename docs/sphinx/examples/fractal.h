@@ -1,12 +1,7 @@
 /*
  * #%L
  * OME-FILES C++ library for image IO.
- * Copyright © 2006 - 2015 Open Microscopy Environment:
- *   - Massachusetts Institute of Technology
- *   - National Institutes of Health
- *   - University of Dundee
- *   - Board of Regents of the University of Wisconsin-Madison
- *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -35,41 +30,36 @@
  * #L%
  */
 
-#include <cstring>
+#pragma once
 
-#include <ome/files/TileBuffer.h>
+#include <ostream>
 
-namespace ome
-{
-  namespace files
+#include <ome/files/FormatWriter.h>
+
+/*
+ * Type of fractal to generate.
+ */
+enum class
+FractalType
   {
+    MANDELBROT,
+    JULIA
+  };
 
-    TileBuffer::TileBuffer(dimension_size_type size):
-      buf(size, 0)
-    {
-    }
+/*
+ *  Write a single image plane.
+ *
+ * writer - the writer object to use; introspect for the current plane size and other properties.
+ * fractal - the type of fractal to generate.
+ * stream - output stream for logging progress messages.
+ */
+void
+write_fractal(ome::files::FormatWriter& writer,
+              FractalType               fractal,
+              std::ostream&             stream);
 
-    TileBuffer::~TileBuffer()
-    {
-    }
-
-    dimension_size_type
-    TileBuffer::size() const
-    {
-      return buf.size();
-    }
-
-    uint8_t *
-    TileBuffer::data()
-    {
-      return buf.data();
-    }
-
-    const uint8_t *
-    TileBuffer::data() const
-    {
-      return buf.data();
-    }
-
-  }
-}
+/*
+ * Local Variables:
+ * mode:C++
+ * End:
+ */

@@ -7,6 +7,7 @@
 #   - University of Dundee
 #   - Board of Regents of the University of Wisconsin-Madison
 #   - Glencoe Software, Inc.
+# Copyright © 2018 Quantitative Imaging Systems, LLC
 # %%
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -61,6 +62,7 @@ set(OME_FILES_SOURCES
 
 set(OME_FILES_HEADERS
     CoreMetadata.h
+    CoreMetadataList.h
     FileInfo.h
     FormatException.h
     MetadataMap.h
@@ -69,6 +71,7 @@ set(OME_FILES_HEADERS
     FormatTools.h
     FormatWriter.h
     MetadataConfigurable.h
+    MetadataList.h
     MetadataOptions.h
     MetadataTools.h
     Modulo.h

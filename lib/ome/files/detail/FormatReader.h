@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -108,9 +109,6 @@ namespace ome
                            virtual public ::ome::files::FormatHandler
       {
       protected:
-        /// List type for storing CoreMetadata.
-        typedef std::vector<std::shared_ptr<::ome::files::CoreMetadata>> coremetadata_list_type;
-
         /// Reader properties specific to the derived file format.
         const ReaderProperties& readerProperties;
 
@@ -124,20 +122,20 @@ namespace ome
         ::ome::files::MetadataMap metadata;
 
         /**
-         * The number of the current series (flattened).
-         *
-         * @todo Remove use of stateful API which requires use of
-         * series switching in const methods.
-         */
-        mutable dimension_size_type coreIndex;
-
-        /**
          * The number of the current series (non-flattened).
          *
          * @todo Remove use of stateful API which requires use of
          * series switching in const methods.
          */
         mutable dimension_size_type series;
+
+        /**
+         * The number of the current resolution.
+         *
+         * @todo Remove use of stateful API which requires use of
+         * series switching in const methods.
+         */
+        mutable dimension_size_type resolution;
 
         /**
          * The number of the current plane in the current series.
@@ -148,15 +146,7 @@ namespace ome
         mutable dimension_size_type plane;
 
         /// Core metadata values.
-        coremetadata_list_type core;
-
-        /**
-         * The number of the current resolution.
-         *
-         * @todo Remove use of stateful API which requires use of
-         * series switching in const methods.
-         */
-        mutable dimension_size_type resolution;
+        CoreMetadataList core;
 
         /// Whether or not resolutions are flattened.
         bool flattenedResolutions;
@@ -314,34 +304,39 @@ namespace ome
         makeFilterMetadata();
 
         /**
-         * Get CoreMetadata by core index.
+         * Get CoreMetadata by series and resolution.
          *
-         * @param index the core index.
+         * @param series the series index.
+         * @param resolution the resolution index.
          * @returns the CoreMetadata.
-         * @throws std::range_error if the core index is invalid.
+         * @throws std::range_error if the series or resolution
+         * indexes are invalid.
          * @throws std::logic_error if the metadata is null.
          */
         const CoreMetadata&
-        getCoreMetadata(dimension_size_type index) const
+        getCoreMetadata(dimension_size_type series,
+                        dimension_size_type resolution) const
         {
-          coremetadata_list_type::value_type cm(core.at(index));
+          const auto& cm = core.at(series).at(resolution);
           if (!cm)
             throw std::logic_error("CoreMetadata null");
           return *cm;
         }
 
         /**
-         * Get CoreMetadata by core index.
+         * Get CoreMetadata by series and resolution.
          *
-         * @param index the core index.
+         * @param series the series index.
+         * @param resolution the resolution index.
          * @returns the CoreMetadata.
          * @throws std::range_error if the core index is invalid.
          * @throws std::logic_error if the metadata is null.
          */
         CoreMetadata&
-        getCoreMetadata(dimension_size_type index)
+        getCoreMetadata(dimension_size_type series,
+                        dimension_size_type resolution)
         {
-          coremetadata_list_type::value_type cm(core.at(index));
+          auto& cm = core.at(series).at(resolution);
           if (!cm)
             throw std::logic_error("CoreMetadata null");
           return *cm;
@@ -554,7 +549,7 @@ namespace ome
 
         // Documented in superclass.
         bool
-        isInterleaved(dimension_size_type subC) const;
+        isInterleaved(dimension_size_type channel) const;
 
         // Documented in superclass.
         void
@@ -689,7 +684,7 @@ namespace ome
         getZCTModuloCoords(dimension_size_type index) const;
 
         // Documented in superclass.
-        const std::vector<std::shared_ptr<::ome::files::CoreMetadata>>&
+        const CoreMetadataList&
         getCoreMetadataList() const;
 
         // Documented in superclass.
@@ -758,22 +753,6 @@ namespace ome
 
         // Documented in superclass.
         dimension_size_type
-        seriesToCoreIndex(dimension_size_type series) const;
-
-        // Documented in superclass.
-        dimension_size_type
-        coreIndexToSeries(dimension_size_type index) const;
-
-        // Documented in superclass.
-        dimension_size_type
-        getCoreIndex() const;
-
-        // Documented in superclass.
-        void
-        setCoreIndex(dimension_size_type index) const;
-
-        // Documented in superclass.
-        dimension_size_type
         getResolutionCount() const;
 
         // Documented in superclass.
@@ -783,14 +762,6 @@ namespace ome
         // Documented in superclass.
         dimension_size_type
         getResolution() const;
-
-        // Documented in superclass.
-        bool
-        hasFlattenedResolutions() const;
-
-        // Documented in superclass.
-        void
-        setFlattenedResolutions(bool flatten);
 
         // Documented in superclass.
         void

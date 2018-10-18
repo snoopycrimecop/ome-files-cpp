@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -154,7 +155,7 @@ namespace ome
          * @returns the IFD index.
          * @throws FormatException if out of range.
          */
-        const std::shared_ptr<const tiff::IFD>
+        std::shared_ptr<const tiff::IFD>
         ifdAtIndex(dimension_size_type plane) const;
 
         /**
@@ -176,7 +177,7 @@ namespace ome
          * @returns the open TIFF.
          * @throws FormatException if invalid.
          */
-        const std::shared_ptr<const ome::files::tiff::TIFF>
+        std::shared_ptr<const ome::files::tiff::TIFF>
         getTIFF(const boost::filesystem::path& tiff) const;
 
         /**
@@ -278,6 +279,58 @@ namespace ome
                       const boost::optional<std::string>&   currentUUID);
 
         /**
+         * Find and validate all TiffData elements.
+         *
+         * @param meta the metadata store to use.
+         */
+        void
+        findTiffData(const ome::xml::meta::OMEXMLMetadata& meta);
+
+        /**
+         * Get filename for a specific TiffData element.
+         *
+         * @param meta the metadata store to query.
+         * @param series the series to check.
+         * @param tiffDataIndex the TIFF data index to check.
+         * @returns the filename.
+         */
+        boost::filesystem::path
+        getTiffDataFilename(const ome::xml::meta::OMEXMLMetadata&    meta,
+                            ome::xml::meta::BaseMetadata::index_type series,
+                            ome::xml::meta::BaseMetadata::index_type tiffDataIndex);
+
+        /**
+         * Check validity of channel samples.
+         *
+         * Add channel sample counts to @c CoreMetadata.  If missing,
+         * assume n channels of 1 sample each.
+         *
+         * @param meta the metadata store to query.
+         */
+        void
+        checkChannelSamplesPerPixel(const ome::xml::meta::OMEXMLMetadata& meta);
+
+        /**
+         * Fill CoreMetadata from OMEXMLMetadata and TIFF metadata
+         *
+         * @param meta the metadata store to query.
+         * @param series the series to check.
+         * @param resolution the resolution to check.
+         */
+        void
+        fillCoreMetadata(const ome::xml::meta::OMEXMLMetadata&    meta,
+                         ome::xml::meta::BaseMetadata::index_type series,
+                         ome::xml::meta::BaseMetadata::index_type resolution);
+
+        /**
+         * Find all Modulo annotations.
+         *
+         * @param meta the metadata store to use.
+         */
+        void
+        findModulo(const ome::xml::meta::OMEXMLMetadata& meta);
+
+        /**
          * Get acquisition dates for each image.
          *
          * If no date was specified for the image, the timestamp will
@@ -289,6 +342,16 @@ namespace ome
         void
         getAcquisitionDates(const ome::xml::meta::OMEXMLMetadata&                                 meta,
                             std::vector<boost::optional<ome::xml::model::primitives::Timestamp>>& timestamps);
+
+        /**
+         * Set acquisition dates for each image.
+         *
+         * If no date was specified for an image, a warning will be logged.
+         *
+         * @param timestamps the acquisition dates, indexed by image.
+         */
+        void
+        setAcquisitionDates(const std::vector<boost::optional<ome::xml::model::primitives::Timestamp>>& timestamps);
 
         /**
          * Clean up OME-XML metadata.
@@ -354,6 +417,25 @@ namespace ome
                           ome::xml::model::primitives::NonNegativeInteger&                  firstC);
 
         /**
+         * Fix invalid image counts.
+         */
+        void
+        fixImageCounts();
+
+        /**
+         * Fix missing plane indexes.
+         *
+         * If any of the @c Plane element @c TheZ , @c TheT or @c TheC
+         * attributes are missing, add with a value of 0.  Missing
+         * Planes are not added, and existing @c TheZ , @c TheT, and
+         * @c TheC values are not changed.
+         *
+         * @param meta the metadata store to query.
+         */
+        void
+        fixMissingPlaneIndexes(ome::xml::meta::OMEXMLMetadata& meta);
+
+        /**
          * Fix invalid OMERO OME-TIFF metadata.
          *
          * OMERO has in the past written OME-TIFF with incorrect
@@ -364,7 +446,7 @@ namespace ome
          * @param series the series to correct.
          */
         void
-        fixOMEROMetadata(ome::xml::meta::OMEXMLMetadata&          meta,
+        fixOMEROMetadata(const ome::xml::meta::OMEXMLMetadata&    meta,
                          ome::xml::meta::BaseMetadata::index_type series);
 
         /**
@@ -380,6 +462,49 @@ namespace ome
          */
         void
         fixDimensions(ome::xml::meta::BaseMetadata::index_type series);
+
+        /**
+         * Add additional sub-resolutions for each series.
+         *
+         * For each series, check if the first IFD of the series has a
+         * SUBIFDS tag.  If so, check the size and tilesize of each.
+         * It is assumed that any additional TIFF planes (IFDs) will
+         * follow the same layout.
+         *
+         * @param meta the metadata store to query.
+         */
+        void
+        addSubResolutions(const ome::xml::meta::OMEXMLMetadata& meta);
+
+        /**
+         * Initialize the given companion file.
+         *
+         * Will call initFile() to process all referenced TIFF files.
+         *
+         * @throws FormatException if a parsing error occurs
+         * processing the file.
+         *
+         * @sa initFile().
+         */
+        void
+        initCompanionFile();
+
+        /**
+         * Read companion file into metadata store.
+         *
+         * @param binarymeta the binary-only metadata store to use.
+         * @returns a new metadata store.
+         */
+        std::shared_ptr<::ome::xml::meta::OMEXMLMetadata>
+        readCompanionFile(ome::xml::meta::OMEXMLMetadata& binarymeta);
+
+        /**
+         * Check if the metadata contains any plates.
+         *
+         * @param meta the metadata store to check.
+         */
+        void
+        checkSPW(ome::xml::meta::OMEXMLMetadata& meta);
 
       public:
         /**

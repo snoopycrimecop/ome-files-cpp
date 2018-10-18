@@ -123,9 +123,12 @@ namespace ome
         /// Current TIFF file.
         tiff_map::iterator currentTIFF;
 
+        /// Current TIFF file.
+        std::shared_ptr<tiff::IFD> currentIFD;
+
         /// TIFF flags.
         std::string flags;
-        
+
         /// State of each series.
         series_list seriesState;
 
@@ -167,11 +170,15 @@ namespace ome
 
         // Documented in superclass.
         void
-        setSeries(dimension_size_type series) const;
+        setSeries(dimension_size_type series);
 
         // Documented in superclass.
         void
-        setPlane(dimension_size_type plane) const;
+        setResolution(dimension_size_type resolution);
+
+        // Documented in superclass.
+        void
+        setPlane(dimension_size_type plane);
 
         // Documented in superclass.
         dimension_size_type
@@ -184,11 +191,15 @@ namespace ome
       protected:
         /// Flush current IFD and create new IFD.
         void
-        nextIFD() const;
+        nextIFD();
+
+        /// Flush current IFD and create new SubIFD.
+        void
+        nextSUBIFD();
 
         /// Set IFD parameters for the current series.
         void
-        setupIFD() const;
+        setupIFD();
 
       public:
         // Documented in superclass.

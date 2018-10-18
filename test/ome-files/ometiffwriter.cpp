@@ -8,6 +8,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -58,6 +59,7 @@
 
 using ome::files::dimension_size_type;
 using ome::files::CoreMetadata;
+using ome::files::PixelBufferBase;
 using ome::files::VariantPixelBuffer;
 using ome::files::in::OMETIFFReader;
 using ome::files::out::OMETIFFWriter;
@@ -66,7 +68,7 @@ using ome::files::tiff::TIFF;
 
 using namespace boost::filesystem;
 
-class TIFFWriterTest : public ::testing::TestWithParam<TIFFTestParameters>
+class OMETIFFWriterTest : public ::testing::TestWithParam<TIFFTestParameters>
 {
 public:
   std::shared_ptr<TIFF> tiff;
@@ -108,7 +110,7 @@ public:
   }
 };
 
-TEST_P(TIFFWriterTest, setId)
+TEST_P(OMETIFFWriterTest, setId)
 {
   const TIFFTestParameters& params = GetParam();
 
@@ -141,14 +143,10 @@ TEST_P(TIFFWriterTest, setId)
       ifd->readImage(buf);
 
       // Make a second buffer to ensure correct ordering for saveBytes.
-      std::array<VariantPixelBuffer::size_type, 9> shape;
-      shape[ome::files::DIM_SPATIAL_X] = ifd->getImageWidth();
-      shape[ome::files::DIM_SPATIAL_Y] = ifd->getImageHeight();
-      shape[ome::files::DIM_SUBCHANNEL] = ifd->getSamplesPerPixel();
-      shape[ome::files::DIM_SPATIAL_Z] = shape[ome::files::DIM_TEMPORAL_T] = shape[ome::files::DIM_CHANNEL] =
-        shape[ome::files::DIM_MODULO_Z] = shape[ome::files::DIM_MODULO_T] = shape[ome::files::DIM_MODULO_C] = 1;
+      std::array<VariantPixelBuffer::size_type, PixelBufferBase::dimensions>
+        shape{ifd->getImageWidth(), ifd->getImageHeight(), 1U, ifd->getSamplesPerPixel()};
 
-      ome::files::PixelBufferBase::storage_order_type order(ome::files::PixelBufferBase::make_storage_order(ome::xml::model::enums::DimensionOrder::XYZTC, !params.imageplanar));
+      ome::files::PixelBufferBase::storage_order_type order(ome::files::PixelBufferBase::make_storage_order(!params.imageplanar));
 
       VariantPixelBuffer src(shape, ifd->getPixelType(), order);
       src = buf;
@@ -172,16 +170,20 @@ TEST_P(TIFFWriterTest, setId)
       {
         tiffreader.setSeries(i);
         const std::shared_ptr<CoreMetadata> ref = seriesList.at(i);
-        
+
         EXPECT_EQ(ref->sizeX, tiffreader.getSizeX());
         EXPECT_EQ(ref->sizeY, tiffreader.getSizeY());
         EXPECT_EQ(ref->sizeZ, tiffreader.getSizeZ());
         EXPECT_EQ(ref->sizeT, tiffreader.getSizeT());
         EXPECT_EQ(ref->sizeC.size(), tiffreader.getEffectiveSizeC());
         if (params.tilewidth)
-          EXPECT_EQ(*params.tilewidth, tiffreader.getOptimalTileWidth(0));
+          {
+            EXPECT_EQ(*params.tilewidth, tiffreader.getOptimalTileWidth(0));
+          }
         if (params.tilelength)
-          EXPECT_EQ(*params.tilelength, tiffreader.getOptimalTileHeight(0));
+          {
+            EXPECT_EQ(*params.tilelength, tiffreader.getOptimalTileHeight(0));
+          }
         EXPECT_EQ(ome::xml::model::enums::PixelType::UINT8, tiffreader.getPixelType());
         EXPECT_EQ(8, tiffreader.getBitsPerPixel());
         EXPECT_EQ(3, tiffreader.getRGBChannelCount(0));
@@ -212,4 +214,4 @@ std::vector<TIFFTestParameters> params(find_tiff_tests());
 #  pragma GCC diagnostic ignored "-Wmissing-declarations"
 #endif
 
-INSTANTIATE_TEST_CASE_P(TIFFWriterVariants, TIFFWriterTest, ::testing::ValuesIn(params));
+INSTANTIATE_TEST_CASE_P(OMETIFFWriterVariants, OMETIFFWriterTest, ::testing::ValuesIn(params));

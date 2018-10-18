@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -65,6 +66,7 @@
 #include <ome/xml/model/Annotation.h>
 #include <ome/xml/model/Channel.h>
 #include <ome/xml/model/Image.h>
+#include <ome/xml/model/MapAnnotation.h>
 #include <ome/xml/model/MetadataOnly.h>
 #include <ome/xml/model/ModelException.h>
 #include <ome/xml/model/OMEModel.h>
@@ -72,6 +74,7 @@
 #include <ome/xml/model/Pixels.h>
 #include <ome/xml/model/StructuredAnnotations.h>
 #include <ome/xml/model/XMLAnnotation.h>
+#include <ome/xml/model/primitives/OrderedMultimap.h>
 #include <ome/xml/model/primitives/Timestamp.h>
 
 #include <xercesc/framework/MemBufInputSource.hpp>
@@ -88,11 +91,13 @@ using boost::format;
 using ome::xml::meta::Metadata;
 using ome::xml::meta::MetadataException;
 using ome::xml::meta::MetadataStore;
+using ome::xml::meta::MetadataRetrieve;
 using ome::xml::meta::MetadataRoot;
 using ome::xml::meta::OMEXMLMetadata;
 using ome::xml::meta::OMEXMLMetadataRoot;
 
 using ome::xml::model::Image;
+using ome::xml::model::MapAnnotation;
 using ome::xml::model::MetadataOnly;
 using ome::xml::model::ModelException;
 using ome::xml::model::OMEModel;
@@ -125,6 +130,8 @@ namespace
           }
       }
   }
+
+  const std::string resolution_namespace("openmicroscopy.org/PyramidResolution");
 
   const ome::compat::regex schema_match("^http://www.openmicroscopy.org/Schemas/OME/(.*)$");
 
@@ -454,12 +461,12 @@ namespace ome
                 }
             }
 
-          // If all subchannels add up to SizeC then the Channel
+          // If all samples add up to SizeC then the Channel
           // metadata is correct; do nothing.
           if (sizeC && realSizeC &&
               sizeC == realSizeC &&
               badChannels.empty())
-            continue;          
+            continue;
 
           valid = false;
           if (!correct)
@@ -467,8 +474,8 @@ namespace ome
 
           if (sizeC == 0 && realSizeC == 0)
             {
-              // No channels or subchannels defined; default to one
-              // subchannel per channel.
+              // No channels or samples defined; default to one
+              // sample per channel.
               meta.setPixelsSizeC(effC, series);
               for (dimension_size_type c = 0; c < effC; ++c)
                 meta.setChannelSamplesPerPixel(1U, series, c);
@@ -476,8 +483,8 @@ namespace ome
           else if (realSizeC > 0 &&
                    badChannels.empty())
             {
-              // All subchannels set and no bad channels; update SizeC
-              // to reflect the subchannel total.
+              // All samples set and no bad channels; update SizeC
+              // to reflect the sample total.
               meta.setPixelsSizeC(realSizeC, series);
             }
           else if (sizeC > 0 &&
@@ -485,7 +492,7 @@ namespace ome
                    !badChannels.empty())
             {
               // Some or all channels are unset.  If the unallocated
-              // subchannels are evenly divisible between the unset
+              // samples are evenly divisible between the unset
               // channels, assign.
               const dimension_size_type allocSamples = realSizeC;
               const dimension_size_type unallocSamples = sizeC >= realSizeC ? sizeC - allocSamples : 0U;
@@ -493,10 +500,10 @@ namespace ome
               const dimension_size_type badSamples = unallocSamples % badChannels.size();
 
               // No point guessing since we can't make a sensible
-              // subchannel allocation; bail out now.
+              // sample allocation; bail out now.
               if (!splitSamples || badSamples || sizeC < realSizeC)
                 {
-                  boost::format fmt("Unable to correct invalid ChannelSamplesPerPixel in Image #%1%; %2% channel(s) set, %3% channel(s) unset, %4% subchannel(s) unallocated");
+                  boost::format fmt("Unable to correct invalid ChannelSamplesPerPixel in Image #%1%; %2% channel(s) set, %3% channel(s) unset, %4% sample(s) unallocated");
                   fmt % series;
                   fmt % (effC - badChannels.size());
                   fmt % badChannels.size();
@@ -822,6 +829,193 @@ namespace ome
     }
 
     void
+    addResolutions(::ome::xml::meta::MetadataStore& store,
+                   dimension_size_type              series,
+                   const ResolutionList&            resolutions)
+    {
+      using OM = ome::xml::model::primitives::OrderedMultimap;
+      OM map;
+
+      if (resolutions.size() > 0)
+        {
+          int count = 1;
+          for (const auto& r : resolutions)
+            {
+              std::ostringstream os;
+              os << r[0] << ' ' << r[1] << ' ' << r[2];
+
+              map.get<1>().insert(OM::value_type(boost::lexical_cast<std::string>(count), os.str()));
+              ++count;
+            }
+
+          MetadataStore::index_type ma_idx = 0;
+
+          MetadataRetrieve& retrieve(dynamic_cast<MetadataRetrieve&>(store));
+          try
+            {
+              ma_idx = retrieve.getMapAnnotationCount();
+            }
+          catch (const ome::xml::meta::MetadataException &)
+            {
+              // StructuredAnnotations does not exist
+            }
+
+          std::string annotation_id = createID("Annotation:Resolutions", ma_idx);
+          store.setMapAnnotationID(annotation_id, ma_idx);
+          store.setMapAnnotationNamespace(resolution_namespace, ma_idx);
+          store.setMapAnnotationValue(map, ma_idx);
+
+          store.setImageAnnotationRef(annotation_id, series,
+                                      retrieve.getImageAnnotationRefCount(series));
+
+          auto& omexml(dynamic_cast<OMEXMLMetadata&>(store));
+          omexml.resolveReferences(); // Not resolved automatically.
+        }
+    }
+
+    void
+    addResolutions(::ome::xml::meta::MetadataStore& store,
+                   const MetadataList<Resolution>&  resolutions)
+    {
+      for (dimension_size_type i = 0; i < resolutions.size(); ++i)
+        {
+          if (resolutions[i].size() > 0)
+            addResolutions(store, i, resolutions[i]);
+        }
+    }
+
+    ResolutionList
+    getResolutions(::ome::xml::meta::MetadataRetrieve& retrieve,
+                   dimension_size_type                 image)
+    {
+      ResolutionList list;
+
+      ::ome::xml::meta::OMEXMLMetadata& momexml(dynamic_cast<::ome::xml::meta::OMEXMLMetadata&>(retrieve));
+
+      std::shared_ptr<OMEXMLMetadataRoot> root =
+        std::dynamic_pointer_cast<OMEXMLMetadataRoot>(momexml.getRoot());
+      if (!root) // Should never occur
+        throw std::logic_error("OMEXMLMetadata does not have an OMEXMLMetadataRoot");
+
+      std::shared_ptr<::ome::xml::model::Image> mimage(root->getImage(image));
+      if (!mimage)
+        throw std::runtime_error("Image does not exist in OMEXMLMetadata");
+
+      auto mapannotation = getAnnotation<Image,MapAnnotation>(mimage, resolution_namespace);
+      if (mapannotation)
+        {
+          auto map = mapannotation->getValue();
+
+          std::map<dimension_size_type, Resolution> nmap;
+
+          for(const auto& elem : map)
+            {
+              dimension_size_type r, x, y, z;
+              std::istringstream k(elem.first);
+              k >> r;
+              std::istringstream v(elem.second);
+              v >> x >> y >> z;
+
+              if (!k || !v)
+                {
+                  nmap.clear();
+                  break;
+                }
+
+              nmap.insert({{r}, {x, y, z}});
+            }
+
+          for (auto& elem : nmap)
+            list.emplace_back(elem.second);
+        }
+
+      return list;
+    }
+
+    MetadataList<Resolution>
+    getResolutions(::ome::xml::meta::MetadataRetrieve& retrieve)
+    {
+      MetadataList<Resolution> ret;
+
+      for (MetadataStore::index_type image = 0;
+           image < retrieve.getImageCount();
+           ++image)
+        {
+          ret.push_back(getResolutions(retrieve, image));
+        }
+
+      return ret;
+    }
+
+    MetadataList<Resolution>
+    getResolutions(const FormatReader& reader)
+    {
+      dimension_size_type oldseries = reader.getSeries();
+      dimension_size_type oldresolution = reader.getResolution();
+
+      MetadataList<Resolution> resolutions;
+
+      dimension_size_type ic = reader.getSeriesCount();
+      resolutions.resize(ic);
+      for (dimension_size_type i = 0 ; i < ic; ++i)
+        {
+          reader.setSeries(i);
+          dimension_size_type rc = reader.getResolutionCount();
+          resolutions[i].resize(rc - 1);
+          for (dimension_size_type r = 0 ; r < rc; ++r)
+            {
+              if (r)
+                {
+                  reader.setResolution(r);
+                  resolutions[i][r - 1] = {reader.getSizeX(), reader.getSizeY(), reader.getSizeZ()};
+                }
+            }
+        }
+
+      reader.setSeries(oldseries);
+      reader.setResolution(oldresolution);
+
+      return resolutions;
+    }
+
+    void
+    removeResolutions(::ome::xml::meta::MetadataStore& store,
+                      dimension_size_type              series)
+    {
+      ::ome::xml::meta::OMEXMLMetadata& momexml(dynamic_cast<::ome::xml::meta::OMEXMLMetadata&>(store));
+
+      std::shared_ptr<OMEXMLMetadataRoot> root =
+        std::dynamic_pointer_cast<OMEXMLMetadataRoot>(momexml.getRoot());
+      if (!root) // Should never occur
+        throw std::logic_error("OMEXMLMetadata does not have an OMEXMLMetadataRoot");
+
+      std::shared_ptr<::ome::xml::model::Image> mimage(root->getImage(series));
+      if (!mimage)
+        throw std::runtime_error("Image does not exist in OMEXMLMetadata");
+
+      auto mapannotation = getAnnotation<Image,MapAnnotation>(mimage, resolution_namespace);
+
+      removeAnnotation<Image,MapAnnotation>(mimage, resolution_namespace);
+
+      auto sa = root->getStructuredAnnotations();
+      if (sa)
+        sa->removeMapAnnotation(mapannotation);
+    }
+
+    void
+    removeResolutions(::ome::xml::meta::MetadataStore& store)
+    {
+      ::ome::xml::meta::OMEXMLMetadata& momexml(dynamic_cast<::ome::xml::meta::OMEXMLMetadata&>(store));
+
+      for (MetadataStore::index_type image = 0;
+           image < momexml.getImageCount();
+           ++image)
+        {
+          removeResolutions(store, image);
+        }
+    }
+
+    void
     verifyMinimum(::ome::xml::meta::MetadataRetrieve& retrieve,
                   dimension_size_type                 series)
     {
@@ -1090,8 +1284,6 @@ namespace ome
           root->setStructuredAnnotations(sa);
         }
     }
-
-    
 
     std::string
     getModelVersion()

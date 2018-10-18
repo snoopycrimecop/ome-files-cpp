@@ -7,6 +7,7 @@
  *   - University of Dundee
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
+ * Copyright © 2018 Quantitative Imaging Systems, LLC
  * %%
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -212,26 +213,6 @@ namespace ome
                           boost::endian::native_uint16_t>(in, endian);
         }
 
-        uint32_t
-        read_raw_uint32(std::istream&  in,
-                        EndianType     endian)
-        {
-          return read_raw<uint32_t,
-                          boost::endian::big_uint32_t,
-                          boost::endian::little_uint32_t,
-                          boost::endian::native_uint32_t>(in, endian);
-        }
-
-        uint64_t
-        read_raw_uint64(std::istream&  in,
-                        EndianType     endian)
-        {
-          return read_raw<uint64_t,
-                          boost::endian::big_uint64_t,
-                          boost::endian::little_uint64_t,
-                          boost::endian::native_uint64_t>(in, endian);
-        }
-
         uint16_t
         read_raw_uint16(std::istream&  in,
                         std::streamoff off,
@@ -332,51 +313,6 @@ namespace ome
             }
           else
             throw std::runtime_error("Bad ostream");
-        }
-
-        void
-        write_raw_uint16(std::ostream& in,
-                         EndianType    endian,
-                         uint16_t      value)
-        {
-          return write_raw<uint16_t,
-                           boost::endian::big_uint16_t,
-                           boost::endian::little_uint16_t,
-                           boost::endian::native_uint16_t>(in, endian, value);
-        }
-
-        void
-        write_raw_uint32(std::ostream& in,
-                         EndianType    endian,
-                         uint32_t      value)
-        {
-          return write_raw<uint32_t,
-                           boost::endian::big_uint32_t,
-                           boost::endian::little_uint32_t,
-                           boost::endian::native_uint32_t>(in, endian, value);
-        }
-
-        void
-        write_raw_uint64(std::ostream& in,
-                         EndianType    endian,
-                         uint64_t      value)
-        {
-          return write_raw<uint64_t,
-                           boost::endian::big_uint64_t,
-                           boost::endian::little_uint64_t,
-                           boost::endian::native_uint64_t>(in, endian, value);
-        }
-
-        void
-        write_raw_uint16(std::ostream&  in,
-                         std::streamoff off,
-                         EndianType     endian,
-                         uint16_t       value)
-        {
-          write_raw<uint16_t,
-                    boost::endian::big_uint16_t,
-                    boost::endian::little_uint16_t,
-                    boost::endian::native_uint16_t>(in, off, endian, value);
         }
 
         void
@@ -593,7 +529,7 @@ namespace ome
       }
 
       void
-      OMETIFFWriter::setSeries(dimension_size_type series) const
+      OMETIFFWriter::setSeries(dimension_size_type series)
       {
         const dimension_size_type currentSeries = getSeries();
         detail::FormatWriter::setSeries(series);
@@ -606,7 +542,20 @@ namespace ome
       }
 
       void
-      OMETIFFWriter::setPlane(dimension_size_type plane) const
+      OMETIFFWriter::setResolution(dimension_size_type resolution)
+      {
+        const dimension_size_type currentResolution = getResolution();
+        detail::FormatWriter::setResolution(resolution);
+
+        if (currentResolution != resolution)
+          {
+            nextSUBIFD();
+            setupIFD();
+          }
+      }
+
+      void
+      OMETIFFWriter::setPlane(dimension_size_type plane)
       {
         const dimension_size_type currentPlane = getPlane();
         detail::FormatWriter::setPlane(plane);
@@ -649,14 +598,20 @@ namespace ome
       }
 
       void
-      OMETIFFWriter::nextIFD() const
+      OMETIFFWriter::nextIFD()
       {
         currentTIFF->second.tiff->writeCurrentDirectory();
         ++currentTIFF->second.ifdCount;
       }
 
       void
-      OMETIFFWriter::setupIFD() const
+      OMETIFFWriter::nextSUBIFD()
+      {
+        currentTIFF->second.tiff->writeCurrentDirectory();
+      }
+
+      void
+      OMETIFFWriter::setupIFD()
       {
         // Get current IFD.
         std::shared_ptr<tiff::IFD> ifd (currentTIFF->second.tiff->getCurrentDirectory());
@@ -743,7 +698,7 @@ namespace ome
 
         // This isn't necessarily always true; we might want to use a
         // photometric interpretation other than RGB with three
-        // subchannels.
+        // samples.
         if (isRGB(channel) && getRGBChannelCount(channel) == 3)
           ifd->setPhotometricInterpretation(tiff::RGB);
         else
@@ -755,6 +710,24 @@ namespace ome
 
         if (currentTIFF->second.ifdCount == 0)
           ifd->getField(ome::files::tiff::IMAGEDESCRIPTION).set(default_description);
+
+        // Set up SubIFD if this is a full-resolution image and
+        // sub-resolution images are present.
+        if (getResolution() == 0)
+          {
+            ifd->getField(ome::files::tiff::SUBFILETYPE).set(ome::files::tiff::SUBFILETYPE_PAGE);
+            if (getResolutionCount() > 1)
+              {
+                ifd->setSubIFDCount(getResolutionCount() - 1);
+              }
+          }
+        else
+          {
+            ifd->getField(ome::files::tiff::SUBFILETYPE).set
+              (ome::files::tiff::SUBFILETYPE_PAGE|ome::files::tiff::SUBFILETYPE_REDUCEDIMAGE);
+          }
+
+        currentIFD = currentTIFF->second.tiff->getCurrentDirectory();
       }
 
       void
@@ -769,19 +742,20 @@ namespace ome
 
         setPlane(plane);
 
-        // Get current IFD.
-        std::shared_ptr<tiff::IFD> ifd (currentTIFF->second.tiff->getCurrentDirectory());
-
         // Get plane metadata.
         detail::OMETIFFPlane& planeMeta(seriesState.at(getSeries()).planes.at(plane));
 
-        ifd->writeImage(buf, x, y, w, h);
+        currentIFD->writeImage(buf, x, y, w, h);
 
         // Set plane metadata.
-        planeMeta.id = currentTIFF->first;
-        planeMeta.ifd = currentTIFF->second.ifdCount;
-        planeMeta.certain = true;
-        planeMeta.status = detail::OMETIFFPlane::PRESENT; // Plane now written.
+        if (getResolution() == 0)
+          {
+            planeMeta.id = currentTIFF->first;
+            planeMeta.index = currentTIFF->second.ifdCount;
+            planeMeta.ifd = nullptr; // Unused for writing.
+            planeMeta.certain = true;
+            planeMeta.status = detail::OMETIFFPlane::PRESENT; // Plane now written.
+          }
       }
 
       void
@@ -838,7 +812,7 @@ namespace ome
                     omeMeta->setTiffDataFirstZ(coords[0], series, plane);
                     omeMeta->setTiffDataFirstT(coords[2], series, plane);
                     omeMeta->setTiffDataFirstC(coords[1], series, plane);
-                    omeMeta->setTiffDataIFD(planeState.ifd, series, plane);
+                    omeMeta->setTiffDataIFD(planeState.index, series, plane);
                     omeMeta->setTiffDataPlaneCount(1, series, plane);
                   }
                 else

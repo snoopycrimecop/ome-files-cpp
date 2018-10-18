@@ -186,10 +186,9 @@ namespace ome
         }
       };
 
-      // Note boost::make_shared can't be used here.
       TIFF::TIFF(const boost::filesystem::path& filename,
                  const std::string&             mode):
-        impl(std::shared_ptr<Impl>(new Impl(filename, mode)))
+        impl(std::make_unique<Impl>(filename, mode))
       {
         registerImageJTags();
 
@@ -224,8 +223,7 @@ namespace ome
         std::shared_ptr<TIFF> ret;
         try
           {
-            // Note boost::make_shared can't be used here.
-            ret = std::shared_ptr<TIFF>(new TIFFConcrete(filename, mode));
+            ret = std::make_shared<TIFFConcrete>(filename, mode);
           }
         catch (const std::exception& e)
           {
@@ -289,13 +287,27 @@ namespace ome
       void
       TIFF::writeCurrentDirectory()
       {
+        writeDirectory(getCurrentDirectory());
+      }
+
+      void
+      TIFF::writeDirectory(std::shared_ptr<IFD> ifd)
+      {
         Sentry sentry;
 
         static const std::string software("OME Files (C++) " OME_FILES_VERSION_MAJOR_S "." OME_FILES_VERSION_MINOR_S "." OME_FILES_VERSION_PATCH_S);
-        getCurrentDirectory()->getField(SOFTWARE).set(software);
+        ifd->getField(SOFTWARE).set(software);
 
-        if (!TIFFWriteDirectory(impl->tiff))
-          sentry.error("Failed to write current directory");
+        if (ifd->getOffset())
+          {
+            if (!TIFFRewriteDirectory(impl->tiff))
+              sentry.error("Failed to rewrite current directory");
+          }
+        else
+          {
+            if (!TIFFWriteDirectory(impl->tiff))
+              sentry.error("Failed to write current directory");
+          }
       }
 
       TIFF::iterator

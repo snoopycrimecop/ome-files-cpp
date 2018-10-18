@@ -57,6 +57,7 @@
 #include <tiffio.h>
 
 using ome::xml::model::enums::PixelType;
+using index_type = ome::files::VariantPixelBuffer::indices_type::value_type;
 
 namespace
 {
@@ -234,6 +235,59 @@ namespace
     }
 
     template<typename T>
+    void
+    transferRGBA(std::shared_ptr<T>&       /* buffer */,
+                 typename T::indices_type& /* destidx */,
+                 const TileBuffer&         /* tilebuf */,
+                 PlaneRegion&              /* rfull */,
+                 PlaneRegion&              /* rclip */,
+                 uint16_t                  /* copysamples */)
+    {
+      boost::format fmt("Unsupported TIFF RGBA pixel type %1%");
+      fmt % ifd.getPixelType();
+      throw Exception(fmt.str());
+    }
+
+    // Special case for UINT8 RGBA
+    void
+    transferRGBA(std::shared_ptr<PixelBuffer<PixelProperties<PixelType::UINT8>::std_type>>& buffer,
+                 PixelBuffer<PixelProperties<PixelType::UINT8>::std_type>::indices_type&    destidx,
+                 const TileBuffer&                                                          tilebuf,
+                 PlaneRegion&                                                               rfull,
+                 PlaneRegion&                                                               rclip,
+                 uint16_t                                                                   copysamples)
+    {
+      // Transfer discontiguous block (typically dropping alpha).
+
+      typedef PixelBuffer<PixelProperties<PixelType::UINT8>::std_type> T;
+
+      const T::value_type *src = reinterpret_cast<const T::value_type *>(tilebuf.data());
+
+      for (dimension_size_type row = rclip.y;
+           row < rclip.y + rclip.h;
+           ++row)
+        {
+          // Indexed from bottom-left, so invert y.
+          dimension_size_type yoffset = (rclip.y + rclip.h - row - 1) * (rfull.w * 4);
+          destidx[ome::files::DIM_SPATIAL_Y] = row - region.y;
+
+          for (dimension_size_type col = rclip.x;
+               col < rclip.x + rclip.w;
+               ++col)
+            {
+              dimension_size_type xoffset = (rclip.x - rfull.x + col) * 4;
+              destidx[ome::files::DIM_SPATIAL_X] = col - region.x;
+
+              for (uint16_t sample = 0; sample < copysamples; ++sample)
+                {
+                  destidx[ome::files::DIM_SAMPLE] = sample;
+                  buffer->array()(destidx) = src[xoffset + yoffset + sample];
+                }
+            }
+        }
+    }
+
+    template<typename T>
     dimension_size_type
     expected_read(const std::shared_ptr<T>& /* buffer */,
                   const PlaneRegion&        rclip,
@@ -279,11 +333,11 @@ namespace
           dimension_size_type sample = tileinfo.tileSample(tile);
 
           uint16_t copysamples = samples;
-          dimension_size_type dest_subchannel = 0;
+          dimension_size_type dest_sample = 0;
           if (planarconfig == SEPARATE)
             {
               copysamples = 1;
-              dest_subchannel = sample;
+              dest_sample = sample;
             }
 
           if (type == TILE)
@@ -304,13 +358,7 @@ namespace
                 sentry.error("Failed to read encoded strip fully");
             }
 
-          typename T::indices_type destidx;
-          destidx[ome::files::DIM_SPATIAL_X] = 0;
-          destidx[ome::files::DIM_SPATIAL_Y] = 0;
-          destidx[ome::files::DIM_SUBCHANNEL] = dest_subchannel;
-          destidx[ome::files::DIM_SPATIAL_Z] = destidx[ome::files::DIM_TEMPORAL_T] =
-            destidx[ome::files::DIM_CHANNEL] = destidx[ome::files::DIM_MODULO_Z] =
-            destidx[ome::files::DIM_MODULO_T] = destidx[ome::files::DIM_MODULO_C] = 0;
+          typename T::indices_type destidx = {0, 0, 0, static_cast<index_type>(dest_sample)};
 
           transfer(buffer, destidx, tilebuf, rfull, rclip, copysamples);
         }
@@ -340,49 +388,45 @@ namespace
       tiles(tiles)
     {}
 
-    // Flush covered tiles.
+    // Flush covered tile.
     void
-    flush()
+    flush(tstrile_t tile)
     {
       std::shared_ptr<::ome::files::tiff::TIFF>& tiff(ifd.getTIFF());
       ::TIFF *tiffraw = reinterpret_cast<::TIFF *>(tiff->getWrapped());
       TileType type = tileinfo.tileType();
       PlaneRegion rimage(0, 0, ifd.getImageWidth(), ifd.getImageHeight());
-      tstrile_t tile = static_cast<tstrile_t>(ifd.getCurrentTile());
 
       Sentry sentry;
-      while(tile < tileinfo.tileCount())
+
+      dimension_size_type tile_sample = tileinfo.tileSample(tile);
+
+      PlaneRegion validarea = tileinfo.tileRegion(tile) & rimage;
+      if (!validarea.area())
+        return;
+
+      if (!tilecoverage.at(tile_sample).covered(validarea))
+        return;
+
+      assert(tilecache.find(tile));
+      TileBuffer& tilebuf = *tilecache.find(tile);
+      if (type == TILE)
         {
-          dimension_size_type tile_subchannel = tileinfo.tileSample(tile);
-
-          PlaneRegion validarea = tileinfo.tileRegion(tile) & rimage;
-          if (!validarea.area())
-            break;
-
-          if (!tilecoverage.at(tile_subchannel).covered(validarea))
-            break;
-
-          assert(tilecache.find(tile));
-          TileBuffer& tilebuf = *tilecache.find(tile);
-          if (type == TILE)
-            {
-              tsize_t byteswritten = TIFFWriteEncodedTile(tiffraw, tile, tilebuf.data(), static_cast<tsize_t>(tilebuf.size()));
-              if (byteswritten < 0)
-                sentry.error("Failed to write encoded tile");
-              else if (static_cast<dimension_size_type>(byteswritten) != tilebuf.size())
-                sentry.error("Failed to write encoded tile fully");
-            }
-          else
-            {
-              tsize_t byteswritten = TIFFWriteEncodedStrip(tiffraw, tile, tilebuf.data(), static_cast<tsize_t>(tilebuf.size()));
-              if (byteswritten < 0)
-                sentry.error("Failed to write encoded strip");
-              else if (static_cast<dimension_size_type>(byteswritten) != tilebuf.size())
-                sentry.error("Failed to write encoded strip fully");
-            }
-          tilecache.erase(tile);
-          ifd.setCurrentTile(++tile);
+          tsize_t byteswritten = TIFFWriteEncodedTile(tiffraw, tile, tilebuf.data(), static_cast<tsize_t>(tilebuf.size()));
+          if (byteswritten < 0)
+            sentry.error("Failed to write encoded tile");
+          else if (static_cast<dimension_size_type>(byteswritten) != tilebuf.size())
+            sentry.error("Failed to write encoded tile fully");
         }
+      else
+        {
+          tsize_t byteswritten = TIFFWriteEncodedStrip(tiffraw, tile, tilebuf.data(), static_cast<tsize_t>(tilebuf.size()));
+          if (byteswritten < 0)
+            sentry.error("Failed to write encoded strip");
+          else if (static_cast<dimension_size_type>(byteswritten) != tilebuf.size())
+            sentry.error("Failed to write encoded strip fully");
+        }
+      tilecache.erase(tile);
     }
 
     template<typename T>
@@ -501,34 +545,29 @@ namespace
           dimension_size_type sample = tileinfo.tileSample(tile);
 
           uint16_t copysamples = samples;
-          dimension_size_type dest_subchannel = 0;
+          dimension_size_type dest_sample = 0;
           if (planarconfig == SEPARATE)
             {
               copysamples = 1;
-              dest_subchannel = sample;
+              dest_sample = sample;
             }
 
-          // Note boost::make_shared makes arguments const, so can't use
-          // here.
           if (!tilecache.find(tile))
-            tilecache.insert(tile, std::shared_ptr<TileBuffer>(new TileBuffer(tileinfo.bufferSize())));
+            {
+              tilecache.insert(tile, std::make_shared<TileBuffer>(tileinfo.bufferSize()));
+            }
           assert(tilecache.find(tile));
           TileBuffer& tilebuf = *tilecache.find(tile);
 
-          typename T::indices_type srcidx;
-          srcidx[ome::files::DIM_SPATIAL_X] = 0;
-          srcidx[ome::files::DIM_SPATIAL_Y] = 0;
-          srcidx[ome::files::DIM_SUBCHANNEL] = dest_subchannel;
-          srcidx[ome::files::DIM_SPATIAL_Z] = srcidx[ome::files::DIM_TEMPORAL_T] =
-            srcidx[ome::files::DIM_CHANNEL] = srcidx[ome::files::DIM_MODULO_Z] =
-            srcidx[ome::files::DIM_MODULO_T] = srcidx[ome::files::DIM_MODULO_C] = 0;
+          typename T::indices_type srcidx = {0, 0, 0, static_cast<index_type>(dest_sample)};
 
           transfer(buffer, srcidx, tilebuf, rfull, rclip, copysamples);
-          tilecoverage.at(dest_subchannel).insert(rclip);
+          tilecoverage.at(dest_sample).insert(rclip);
+
+          // Flush tile if covered.
+          flush(tile);
         }
 
-      // Flush covered tiles
-      flush();
     }
   };
 
@@ -577,9 +616,9 @@ namespace ome
         /// Offset of this IFD.
         offset_type offset;
         /// Tile coverage cache (used when writing).
-        std::vector<TileCoverage> coverage;
+        std::shared_ptr<std::vector<TileCoverage>> coverage;
         /// Tile cache (used when writing).
-        TileCache tilecache;
+        std::shared_ptr<TileCache> tilecache;
         /// Tile type.
         boost::optional<TileType> tiletype;
         /// Image width.
@@ -602,8 +641,8 @@ namespace ome
         boost::optional<PhotometricInterpretation> photometric;
         /// Compression scheme.
         boost::optional<Compression> compression;
-        /// Current tile (for writing).
-        tstrile_t ctile;
+        /// Compression scheme.
+        boost::optional<std::vector<uint64_t>> subifds;
 
         /**
          * Constructor.
@@ -615,16 +654,36 @@ namespace ome
              offset_type            offset):
           tiff(tiff),
           offset(offset),
-          coverage(),
-          tilecache(),
+          coverage(std::make_shared<std::vector<TileCoverage>>()),
+          tilecache(std::make_shared<TileCache>()),
           imagewidth(),
           imageheight(),
           tilewidth(),
           tileheight(),
           pixeltype(),
           samples(),
-          planarconfig(),
-          ctile(0)
+          planarconfig()
+        {
+        }
+
+        /**
+         * Copy constructor.
+         *
+         * @param copy the object to copy.
+         */
+        Impl(const Impl& copy):
+          tiff(copy.tiff),
+          offset(copy.offset),
+          coverage(copy.coverage),
+          tilecache(copy.tilecache),
+          imagewidth(copy.imagewidth),
+          imageheight(copy.imageheight),
+          tilewidth(copy.tilewidth),
+          tileheight(copy.tileheight),
+          pixeltype(copy.pixeltype),
+          samples(copy.samples),
+          planarconfig(copy.planarconfig),
+          subifds(copy.subifds)
         {
         }
 
@@ -633,31 +692,60 @@ namespace ome
         {
         }
 
-        /// @cond SKIP
-        Impl (const Impl&) = delete;
-
+        /**
+         * Copy assignment operator.
+         *
+         * @param rhs the object to assign.
+         * @returns the modified object.
+         */
         Impl&
-        operator= (const Impl&) = delete;
-        /// @endcond SKIP
+        operator= (const Impl& rhs)
+        {
+          tiff = rhs.tiff;
+          offset = rhs.offset;
+          coverage = rhs.coverage;
+          tilecache = rhs.tilecache;
+          imagewidth = rhs.imagewidth;
+          imageheight = rhs.imageheight;
+          tilewidth = rhs.tilewidth;
+          tileheight = rhs.tileheight;
+          pixeltype = rhs.pixeltype;
+          samples = rhs.samples;
+          planarconfig = rhs.planarconfig;
+          subifds = rhs.subifds;
+
+          return *this;
+        }
       };
 
       IFD::IFD(std::shared_ptr<TIFF>& tiff,
                offset_type            offset):
-        // Note boost::make_shared makes arguments const, so can't use
-        // here.
-        impl(std::shared_ptr<Impl>(new Impl(tiff, offset)))
+        enable_shared_from_this(),
+        impl(std::make_unique<Impl>(tiff, offset))
       {
       }
 
       IFD::IFD(std::shared_ptr<TIFF>& tiff):
-        // Note boost::make_shared makes arguments const, so can't use
-        // here.
-        impl(std::shared_ptr<Impl>(new Impl(tiff, 0)))
+        enable_shared_from_this(),
+        impl(std::make_unique<Impl>(tiff, 0))
+      {
+      }
+
+      IFD::IFD(const IFD& copy):
+        enable_shared_from_this(),
+        impl(std::make_unique<Impl>(*(copy.impl)))
       {
       }
 
       IFD::~IFD()
       {
+      }
+
+      IFD&
+      IFD::operator= (const IFD& rhs)
+      {
+        *impl = *(rhs.impl);
+        return *this;
       }
 
       std::shared_ptr<IFD>
@@ -671,8 +759,6 @@ namespace ome
         if (!TIFFSetDirectory(tiffraw, index))
           sentry.error();
 
-        // Note boost::make_shared makes arguments const, so can't use
-        // here.
         return openOffset(tiff, static_cast<uint64_t>(TIFFCurrentDirOffset(tiffraw)));
       }
 
@@ -680,17 +766,13 @@ namespace ome
       IFD::openOffset(std::shared_ptr<TIFF>& tiff,
                       offset_type            offset)
       {
-        // Note boost::make_shared makes arguments const, so can't use
-        // here.
-        return std::shared_ptr<IFD>(new IFDConcrete(tiff, offset));
+        return std::make_shared<IFDConcrete>(tiff, offset);
       }
 
       std::shared_ptr<IFD>
       IFD::current(std::shared_ptr<TIFF>& tiff)
       {
-        // Note boost::make_shared makes arguments const, so can't use
-        // here.
-        return std::shared_ptr<IFD>(new IFDConcrete(tiff));
+        return std::make_shared<IFDConcrete>(tiff);
       }
 
       void
@@ -831,18 +913,6 @@ namespace ome
         impl->tiletype = type;
       }
 
-      dimension_size_type
-      IFD::getCurrentTile() const
-      {
-        return impl->ctile;
-      }
-
-      void
-      IFD::setCurrentTile(dimension_size_type tile)
-      {
-        impl->ctile = static_cast<tstrile_t>(tile);
-      }
-
       TileInfo
       IFD::getTileInfo()
       {
@@ -858,13 +928,13 @@ namespace ome
       std::vector<TileCoverage>&
       IFD::getTileCoverage()
       {
-        return impl->coverage;
+        return *(impl->coverage);
       }
 
       const std::vector<TileCoverage>&
       IFD::getTileCoverage() const
       {
-        return impl->coverage;
+        return *(impl->coverage);
       }
 
       uint32_t
@@ -1215,6 +1285,39 @@ namespace ome
         impl->compression = compression;
       }
 
+      uint16_t
+      IFD::getSubIFDCount() const
+      {
+        return getSubIFDOffsets().size();
+      }
+
+      std::vector<uint64_t>
+      IFD::getSubIFDOffsets() const
+      {
+        if (!impl->subifds)
+          {
+            std::vector<uint64_t> subifds;
+            getField(SUBIFD).get(subifds);
+            impl->subifds = subifds;
+          }
+        return impl->subifds.get();
+      }
+
+      void
+      IFD::setSubIFDCount(uint16_t size)
+      {
+        std::vector<uint64_t> subifds(size, 0U);
+        setSubIFDOffsets(subifds);
+      }
+
+
+      void
+      IFD::setSubIFDOffsets(const std::vector<uint64_t>& subifds)
+      {
+        getField(SUBIFD).set(subifds);
+        impl->subifds = subifds;
+      }
+
       void
       IFD::readImage(VariantPixelBuffer& buf) const
       {
@@ -1223,9 +1326,9 @@ namespace ome
 
       void
       IFD::readImage(VariantPixelBuffer& buf,
-                     dimension_size_type subC) const
+                     dimension_size_type sample) const
       {
-        readImage(buf, 0, 0, getImageWidth(), getImageHeight(), subC);
+        readImage(buf, 0, 0, getImageWidth(), getImageHeight(), sample);
       }
 
       void
@@ -1237,20 +1340,16 @@ namespace ome
       {
         PixelType type = getPixelType();
         PlanarConfiguration planarconfig = getPlanarConfiguration();
-        uint16_t subC = getSamplesPerPixel();
+        uint16_t sample = getSamplesPerPixel();
 
-        std::array<VariantPixelBuffer::size_type, 9> shape, dest_shape;
-        shape[DIM_SPATIAL_X] = w;
-        shape[DIM_SPATIAL_Y] = h;
-        shape[DIM_SUBCHANNEL] = subC;
-        shape[DIM_SPATIAL_Z] = shape[DIM_TEMPORAL_T] = shape[DIM_CHANNEL] =
-          shape[DIM_MODULO_Z] = shape[DIM_MODULO_T] = shape[DIM_MODULO_C] = 1;
+        std::array<VariantPixelBuffer::size_type, PixelBufferBase::dimensions> shape, dest_shape;
+        shape = {w, h, 1, sample};
 
         const VariantPixelBuffer::size_type *dest_shape_ptr(dest.shape());
         std::copy(dest_shape_ptr, dest_shape_ptr + PixelBufferBase::dimensions,
                   dest_shape.begin());
 
-        PixelBufferBase::storage_order_type order(PixelBufferBase::make_storage_order(ome::xml::model::enums::DimensionOrder::XYZTC, planarconfig == SEPARATE ? false : true));
+        PixelBufferBase::storage_order_type order(PixelBufferBase::make_storage_order(planarconfig == SEPARATE ? false : true));
 
         if (type != dest.pixelType() ||
             shape != dest_shape ||
@@ -1272,13 +1371,13 @@ namespace ome
                      dimension_size_type y,
                      dimension_size_type w,
                      dimension_size_type h,
-                     dimension_size_type subC) const
+                     dimension_size_type sample) const
       {
-        // Copy the desired subchannel into the destination buffer.
+        // Copy the desired sample into the destination buffer.
         VariantPixelBuffer tmp;
         readImage(tmp, x, y, w, h);
 
-        detail::CopySubchannelVisitor v(dest, subC);
+        detail::CopySampleVisitor v(dest, sample);
         ome::compat::visit(v, tmp.vbuffer());
       }
 
@@ -1288,14 +1387,10 @@ namespace ome
         std::array<std::vector<uint16_t>, 3> cmap;
         getField(tiff::COLORMAP).get(cmap);
 
-        std::array<VariantPixelBuffer::size_type, 9> shape;
-        shape[DIM_SPATIAL_X] = cmap.at(0).size();
-        shape[DIM_SPATIAL_Y] = 1;
-        shape[DIM_SUBCHANNEL] = cmap.size();
-        shape[DIM_SPATIAL_Z] = shape[DIM_TEMPORAL_T] = shape[DIM_CHANNEL] =
-          shape[DIM_MODULO_Z] = shape[DIM_MODULO_T] = shape[DIM_MODULO_C] = 1;
+        std::array<VariantPixelBuffer::size_type, PixelBufferBase::dimensions>
+          shape = {cmap.at(0).size(), 1, 1, cmap.size()};
 
-        ::ome::files::PixelBufferBase::storage_order_type order_planar(::ome::files::PixelBufferBase::make_storage_order(::ome::xml::model::enums::DimensionOrder::XYZTC, false));
+        ::ome::files::PixelBufferBase::storage_order_type order_planar(::ome::files::PixelBufferBase::make_storage_order(false));
 
         buf.setBuffer(shape, PixelType::UINT16, order_planar);
 
@@ -1303,17 +1398,12 @@ namespace ome
           (ome::compat::get<std::shared_ptr<PixelBuffer<PixelProperties<PixelType::UINT16>::std_type>>>(buf.vbuffer()));
         assert(uint16_buffer);
 
-        for (VariantPixelBuffer::size_type s = 0U; s < shape[DIM_SUBCHANNEL]; ++s)
+        for (VariantPixelBuffer::size_type s = 0U; s < shape[DIM_SAMPLE]; ++s)
           {
             const std::vector<uint16_t>& channel(cmap.at(s));
 
-            VariantPixelBuffer::indices_type coord;
-            coord[DIM_SPATIAL_X] = 0;
-            coord[DIM_SPATIAL_Y] = 0;
-            coord[DIM_SUBCHANNEL] = s;
-            coord[DIM_SPATIAL_Z] = coord[DIM_TEMPORAL_T] =
-              coord[DIM_CHANNEL] = coord[DIM_MODULO_Z] =
-              coord[DIM_MODULO_T] = coord[DIM_MODULO_C] = 0;
+            VariantPixelBuffer::indices_type coord = {0U, 0U, 0U,
+                                                      static_cast<index_type>(s)};
 
             std::copy(channel.begin(), channel.end(),
                       &uint16_buffer->at(coord));
@@ -1323,9 +1413,9 @@ namespace ome
 
       void
       IFD::writeImage(const VariantPixelBuffer& buf,
-                      dimension_size_type       subC)
+                      dimension_size_type       sample)
       {
-        writeImage(buf, 0, 0, getImageWidth(), getImageHeight(), subC);
+        writeImage(buf, 0, 0, getImageWidth(), getImageHeight(), sample);
       }
 
       void
@@ -1343,20 +1433,16 @@ namespace ome
       {
         PixelType type = getPixelType();
         PlanarConfiguration planarconfig = getPlanarConfiguration();
-        uint16_t subC = getSamplesPerPixel();
+        uint16_t sample = getSamplesPerPixel();
 
-        std::array<VariantPixelBuffer::size_type, 9> shape, source_shape;
-        shape[DIM_SPATIAL_X] = w;
-        shape[DIM_SPATIAL_Y] = h;
-        shape[DIM_SUBCHANNEL] = subC;
-        shape[DIM_SPATIAL_Z] = shape[DIM_TEMPORAL_T] = shape[DIM_CHANNEL] =
-          shape[DIM_MODULO_Z] = shape[DIM_MODULO_T] = shape[DIM_MODULO_C] = 1;
+        std::array<VariantPixelBuffer::size_type, PixelBufferBase::dimensions> shape, source_shape;
+        shape = {w, h, 1, sample};
 
         const VariantPixelBuffer::size_type *source_shape_ptr(source.shape());
         std::copy(source_shape_ptr, source_shape_ptr + PixelBufferBase::dimensions,
                   source_shape.begin());
 
-        PixelBufferBase::storage_order_type order(PixelBufferBase::make_storage_order(ome::xml::model::enums::DimensionOrder::XYZTC, planarconfig == SEPARATE ? false : true));
+        PixelBufferBase::storage_order_type order(PixelBufferBase::make_storage_order(planarconfig == SEPARATE ? false : true));
         PixelBufferBase::storage_order_type source_order(source.storage_order());
 
         if (type != source.pixelType())
@@ -1370,34 +1456,31 @@ namespace ome
           {
             if (shape[DIM_SPATIAL_X] != source_shape[DIM_SPATIAL_X] ||
                 shape[DIM_SPATIAL_Y] != source_shape[DIM_SPATIAL_Y] ||
-                shape[DIM_SUBCHANNEL] != source_shape[DIM_SUBCHANNEL])
+                shape[DIM_SAMPLE] != source_shape[DIM_SAMPLE])
               {
                 boost::format fmt("VariantPixelBuffer dimensions (%1%×%2%, %3% samples) incompatible with TIFF image size (%4%×%5%, %6% samples)");
-                fmt % source_shape[DIM_SPATIAL_X] % source_shape[DIM_SPATIAL_Y] % source_shape[DIM_SUBCHANNEL];
-                fmt % shape[DIM_SPATIAL_X] % shape[DIM_SPATIAL_Y] % shape[DIM_SUBCHANNEL];
+                fmt % source_shape[DIM_SPATIAL_X] % source_shape[DIM_SPATIAL_Y] % source_shape[DIM_SAMPLE];
+                fmt % shape[DIM_SPATIAL_X] % shape[DIM_SPATIAL_Y] % shape[DIM_SAMPLE];
                 throw Exception(fmt.str());
               }
             else
               {
-                boost::format fmt("VariantPixelBuffer dimensions (%1%×%2%×%3%, %4%t, %5%c, %6% samples, %7%mz, %8%mt, %9%mc) incompatible with TIFF image size (%10%×%11%, %12% samples)");
+                boost::format fmt("VariantPixelBuffer dimensions (%1%×%2%×%3%, %4% samples) incompatible with TIFF image size (%5%×%6%, %7% samples)");
                 fmt % source_shape[DIM_SPATIAL_X] % source_shape[DIM_SPATIAL_Y] % source_shape[DIM_SPATIAL_Z];
-                fmt % source_shape[DIM_TEMPORAL_T] % source_shape[DIM_CHANNEL] % source_shape[DIM_SUBCHANNEL];
-                fmt % source_shape[DIM_MODULO_Z] % source_shape[DIM_MODULO_T] % source_shape[DIM_MODULO_C];
-                fmt % shape[DIM_SPATIAL_X] % shape[DIM_SPATIAL_Y] % shape[DIM_SUBCHANNEL];
+                fmt % source_shape[DIM_SAMPLE];
+                fmt % shape[DIM_SPATIAL_X] % shape[DIM_SPATIAL_Y] % shape[DIM_SAMPLE];
                 throw Exception(fmt.str());
               }
           }
 
         if (!(order == source_order))
           {
-            boost::format fmt("VariantPixelBuffer storage order (%1%%2%%3%%4%%5%%6%%7%%8%%9%) incompatible with %10% TIFF planar configuration (%11%%12%%13%%14%%15%%16%%17%%18%%19%");
+            boost::format fmt("VariantPixelBuffer storage order (%1%%2%%3%%4%) incompatible with %5% TIFF planar configuration (%6%%7%%8%%9%)");
             fmt % source_order.ordering(0) % source_order.ordering(1) % source_order.ordering(2);
-            fmt % source_order.ordering(3) % source_order.ordering(4) % source_order.ordering(5);
-            fmt % source_order.ordering(6) % source_order.ordering(7) % source_order.ordering(8);
+            fmt % source_order.ordering(3);
             fmt % (planarconfig == SEPARATE ? "separate" : "contiguous");
             fmt % order.ordering(0) % order.ordering(1) % order.ordering(2);
-            fmt % order.ordering(3) % order.ordering(4) % order.ordering(5);
-            fmt % order.ordering(6) % order.ordering(7) % order.ordering(8);
+            fmt % order.ordering(3);
             throw Exception(fmt.str());
           }
 
@@ -1406,7 +1489,7 @@ namespace ome
         PlaneRegion region(x, y, w, h);
         std::vector<dimension_size_type> tiles(info.tileCoverage(region));
 
-        WriteVisitor v(*this, impl->coverage, impl->tilecache, info, region, tiles);
+        WriteVisitor v(*this, *(impl->coverage), *(impl->tilecache), info, region, tiles);
         ome::compat::visit(v, source.vbuffer());
       }
 
@@ -1416,9 +1499,9 @@ namespace ome
                       dimension_size_type       /* y*/,
                       dimension_size_type       /* w*/,
                       dimension_size_type       /* h*/,
-                      dimension_size_type       /* subC */)
+                      dimension_size_type       /* sample */)
       {
-        throw Exception("Writing subchannels separately is not yet implemented (requires TileCache and WriteVisitor to handle writing and caching of interleaved and non-interleaved subchannels; currently it handles writing all subchannels in one call only and can not combine separate subchannels from separate calls");
+        throw Exception("Writing samples separately is not yet implemented (requires TileCache and WriteVisitor to handle writing and caching of interleaved and non-interleaved samples; currently it handles writing all samples in one call only and can not combine separate samples from separate calls");
       }
 
       std::shared_ptr<IFD>
